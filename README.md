@@ -39,6 +39,62 @@ printf "Run the project validation" | npm run voice:bridge
 
 The bridge asks for explicit confirmation before the first `submit` action. To add a real STT provider later, implement the `AudioCaptureProvider` and `TranscriptionProvider` ports in `src/voice-bridge/` and keep provider credentials outside committed files.
 
+## Runtime smoke checklist
+
+Use this checklist to prove the OpenCode-launched plugin adapter is listening before testing transcript delivery. The smoke helper checks authenticated `GET /v1/ready` only; it does not send transcript text to OpenCode.
+
+### Quick path
+
+1. Start OpenCode from a shell that already has the token:
+
+   ```bash
+   export VOICE_ORCHESTRATOR_TOKEN="replace-with-a-local-dev-token"
+   opencode
+   ```
+
+2. In another shell, set the same token value without printing it and check readiness:
+
+   ```bash
+   export VOICE_ORCHESTRATOR_TOKEN="replace-with-the-same-local-dev-token"
+   npm run voice:smoke
+   ```
+
+3. Expected success signal:
+
+   ```text
+   Voice plugin readiness: ready
+   Endpoint: http://127.0.0.1:47737
+   Authenticated readiness succeeded without transcript delivery.
+   ```
+
+4. Only after readiness passes, run the transcript bridge fallback:
+
+   ```bash
+   npm run voice:bridge -- --text "Run the project validation"
+   ```
+
+### Optional port override
+
+The default endpoint is `http://127.0.0.1:47737`. If the plugin is configured with another port, pass the same port to the smoke helper:
+
+```bash
+VOICE_ORCHESTRATOR_PORT=47738 npm run voice:smoke
+# or
+npm run voice:smoke -- --endpoint http://127.0.0.1:47738
+```
+
+### Troubleshooting smoke failures
+
+| Signal | Likely cause | Safe fix |
+|---|---|---|
+| `missing_token` | The smoke helper shell does not have `VOICE_ORCHESTRATOR_TOKEN`. | Export the token in the smoke helper shell. Do not paste token values into logs or issues. |
+| `token_mismatch` | OpenCode and the smoke helper were started with different token values. | Restart OpenCode from a shell with the intended token, then set the same value in the smoke helper shell. |
+| `connection_refused` | OpenCode is not running, the plugin did not start, or the port is wrong. | Start/restart OpenCode, confirm the configured port, then rerun `npm run voice:smoke`. |
+| `timeout` | The local adapter did not answer within the timeout. | Check for a stale OpenCode process, port conflicts, or a blocked loopback connection. Retry with `npm run voice:smoke -- --timeout-ms 5000` only after checking the runtime. |
+| `plugin_unavailable` with HTTP 404 or invalid response | A stale OpenCode process is running old plugin code, or another local service is using the port. | Fully stop OpenCode, restart it after the latest plugin changes, and verify no other process owns the port. |
+
+If OpenCode is launched from a GUI, desktop launcher, or service manager, it may not inherit shell exports. Start OpenCode from the terminal during smoke verification, or configure the launcher environment so `VOICE_ORCHESTRATOR_TOKEN` is present before the process starts.
+
 ## Transcript contract
 
 The bridge sends authenticated localhost requests to the plugin:
@@ -54,6 +110,8 @@ The bridge sends authenticated localhost requests to the plugin:
 ```
 
 `POST /v1/transcript` requires `Authorization: Bearer <VOICE_ORCHESTRATOR_TOKEN>`. The plugin binds to `127.0.0.1` only.
+
+Readiness uses the same bearer token at `GET /v1/ready`. The readiness response reports endpoint and diagnostic categories only; it must never print token values.
 
 Lifecycle updates use the same bearer token at `POST /v1/status` with `listening`, `transcribing`, `submitted`, `running`, `done`, or `error`. Status messages are generic by default and do not include transcript text.
 
