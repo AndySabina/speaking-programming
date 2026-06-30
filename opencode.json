@@ -1,0 +1,18 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    [
+      "./.opencode/plugin/voice-orchestrator.ts",
+      {
+        "port": 47737,
+        "tokenEnv": "VOICE_ORCHESTRATOR_TOKEN"
+      }
+    ]
+  ],
+  "command": {
+    "voice-orchestrator": {
+      "description": "Show voice orchestrator setup and local transcript contract.",
+      "template": "Read @README.md and summarize how to run the voice orchestrator bridge safely. Do not start any external service unless the user explicitly asks."
+    }
+  }
+}

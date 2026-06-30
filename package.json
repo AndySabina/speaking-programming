@@ -1,0 +1,21 @@
+{
+  "name": "speaking-programming",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "vitest run",
+    "validate": "npm run build && npm run test",
+    "voice:bridge": "tsx src/voice-bridge/index.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.12",
+    "tsx": "^4.22.4",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "latest"
+  }
+}
