@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { accepted, rejected, validateTranscriptRequest, validateVoiceStatusRequest } from "../src/protocol/voice.js"
+import { accepted, notReady, ready, rejected, validateTranscriptRequest, validateVoiceReadinessResponse, validateVoiceStatusRequest } from "../src/protocol/voice.js"
 
 describe("voice transcript protocol", () => {
   it("accepts and normalizes a valid transcript request", () => {
@@ -46,5 +46,14 @@ describe("voice transcript protocol", () => {
       ok: false,
       error: "status must be listening, transcribing, submitted, running, done, or error"
     })
+  })
+
+  it("creates and validates token-safe readiness diagnostics", () => {
+    expect(ready("http://127.0.0.1:47737")).toEqual({ ok: true, status: "ready", endpoint: "http://127.0.0.1:47737", diagnostics: [] })
+
+    const missingToken = notReady({ code: "missing_token", message: "VOICE_ORCHESTRATOR_TOKEN is required." }, "http://127.0.0.1:47737")
+
+    expect(validateVoiceReadinessResponse(missingToken)).toEqual({ ok: true, value: missingToken })
+    expect(JSON.stringify(missingToken)).not.toContain("secret")
   })
 })
