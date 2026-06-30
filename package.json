@@ -8,6 +8,7 @@
     "test": "vitest run",
     "validate": "npm run build && npm run test",
     "voice:bridge": "tsx src/voice-bridge/index.ts",
+    "voice:listen": "VOICE_STT_PROVIDER=command tsx src/voice-bridge/index.ts --provider command",
     "voice:smoke": "tsx src/voice-bridge/smoke.ts"
   },
   "devDependencies": {

@@ -11,7 +11,7 @@ This repository contains a review-sliced implementation for a voice-driven OpenC
 - Automatic localhost bootstrap so normal plugin/bridge use does not require manually sharing `VOICE_ORCHESTRATOR_TOKEN`.
 - Localhost lifecycle status endpoint at `POST /v1/status`.
 - TUI action mapping for prompt append, prompt submit, and allowlisted OpenCode commands.
-- Manual/stdin voice bridge fallback with swappable audio and transcription provider ports.
+- Manual/stdin voice bridge fallback plus a command-based microphone/audio-file STT path behind swappable provider ports.
 
 ## Setup
 
@@ -36,7 +36,54 @@ Without `--text`, the bridge reads transcript text from stdin:
 printf "Run the project validation" | npm run voice:bridge
 ```
 
-The bridge asks for explicit confirmation before the first `submit` action. To add a real STT provider later, implement the `AudioCaptureProvider` and `TranscriptionProvider` ports in `src/voice-bridge/` and keep provider credentials outside committed files.
+The bridge asks for explicit confirmation before the first `submit` action.
+
+## Real voice path with command providers
+
+The first real STT path is command-based so it can use local tools without committed secrets. OpenCode still owns the localhost plugin endpoint and bootstrap token; recording and transcription run in the external bridge process.
+
+### Prerequisites
+
+- Start OpenCode from this project so the plugin writes the local bootstrap session.
+- Install an audio recorder such as `arecord`, `rec`, or `ffmpeg`.
+- Install an STT CLI such as `whisper.cpp`'s `whisper-cli`, another local Whisper wrapper, or a cloud CLI. If the STT CLI needs credentials, configure them in that tool's runtime environment only; do not put keys in `opencode.json`, README snippets, or committed files.
+
+### From `opencode` to spoken command
+
+1. Start OpenCode:
+
+   ```bash
+   opencode
+   ```
+
+2. In OpenCode, run `/voice-orchestrator` and confirm that you want to enter voice mode.
+
+3. In another shell, verify the plugin is reachable:
+
+   ```bash
+   npm run voice:smoke
+   ```
+
+4. Start a live recording/transcription bridge. The recorder command receives the output path as `{output}` and as `VOICE_AUDIO_FILE`; the STT command receives the audio file as `{file}` and as `VOICE_AUDIO_FILE`, and must print the transcript to stdout.
+
+   ```bash
+   VOICE_RECORDER_COMMAND="arecord -d 5 -f cd {output}" \
+   VOICE_STT_COMMAND="whisper-cli -m /path/to/ggml-base.en.bin -f {file} --no-timestamps" \
+   npm run voice:listen
+   ```
+
+5. Speak the instruction, review the transcript confirmation, and approve it to submit into OpenCode.
+
+### Audio-file STT path
+
+If direct microphone capture is not portable on the current machine, record a file with your OS tool first and send that file through the same STT provider:
+
+```bash
+VOICE_STT_COMMAND="whisper-cli -m /path/to/ggml-base.en.bin -f {file} --no-timestamps" \
+npm run voice:bridge -- --provider command --audio-file ./sample.wav
+```
+
+This path is the portable first implementation. Native cross-platform microphone capture is intentionally not embedded in the OpenCode plugin because OpenCode does not expose a documented microphone API; OS recording remains an explicit bridge prerequisite.
 
 ## Runtime smoke checklist
 
@@ -117,7 +164,7 @@ Supported command transcripts are allowlisted to OpenCode TUI commands: `agent.c
 ## Current limitations
 
 - OpenCode currently documents plugins, commands, SDK access, and TUI events, but no native in-TUI microphone or voice input box.
-- Real microphone capture and speech-to-text providers are extension seams only; the safe fallback is manual/stdin transcript input.
+- Native in-plugin microphone capture is not implemented; the real voice path uses external recorder/STT commands from the bridge process.
 - Do not persist raw audio or full transcripts unless a later provider adapter explicitly documents that behavior.
 
 ## Rollback
