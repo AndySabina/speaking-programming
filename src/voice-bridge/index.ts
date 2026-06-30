@@ -2,8 +2,9 @@
 import { createInterface } from "node:readline/promises"
 import { stdin as input, stdout as output } from "node:process"
 import { accepted, notReady, rejected, validateVoiceReadinessResponse, type TranscriptRequest, type VoiceLifecycleStatus, type VoiceReadinessResponse } from "../protocol/voice.js"
-import { createManualTextCaptureProvider, createStdinTextCaptureProvider, type AudioCaptureProvider } from "./audio.js"
-import { ManualTranscriptProvider, type TranscriptionProvider } from "./transcription.js"
+import { readLocalBootstrapSession } from "../voice-orchestrator/bootstrap.js"
+import { createAudioFileCaptureProvider, createCommandAudioCaptureProvider, createManualTextCaptureProvider, createStdinTextCaptureProvider, removeInternallyCreatedAudioCaptureFile, type AudioCapture, type AudioCaptureProvider } from "./audio.js"
+import { CommandTranscriptionProvider, ManualTranscriptProvider, type TranscriptionProvider } from "./transcription.js"
 
 export type BridgeConfig = {
   endpoint: string
@@ -27,6 +28,20 @@ export type VoiceBridge = {
   status?: (status: VoiceLifecycleStatus, message?: string) => Promise<void>
 }
 
+export type VoiceProviderSelection = {
+  audio: AudioCaptureProvider
+  transcription: TranscriptionProvider
+  providerName: "manual" | "command"
+}
+
+export type VoiceProviderSelectionInput = {
+  text?: string
+  audioFile?: string
+  sttProvider?: string
+  sttCommand?: string
+  recorderCommand?: string
+}
+
 export function buildTranscriptRequest(input: { id: string; text: string; action?: TranscriptRequest["action"]; confidence?: number }): TranscriptRequest {
   return {
     id: input.id.trim(),
@@ -35,6 +50,39 @@ export function buildTranscriptRequest(input: { id: string; text: string; action
     action: input.action ?? "submit",
     confidence: input.confidence
   }
+}
+
+export function resolveBridgeConfig(input: { endpoint?: string; port?: string; token?: string } = {}): BridgeConfig {
+  const bootstrap = readLocalBootstrapSession()
+  const endpoint = input.endpoint ?? process.env.VOICE_ORCHESTRATOR_ENDPOINT ?? bootstrap?.endpoint ?? `http://127.0.0.1:${input.port ?? process.env.VOICE_ORCHESTRATOR_PORT ?? "47737"}`
+  const token = input.token ?? process.env.VOICE_ORCHESTRATOR_TOKEN ?? bootstrap?.token ?? ""
+
+  return { endpoint, token }
+}
+
+export function selectVoiceProviders(input: VoiceProviderSelectionInput = {}): VoiceProviderSelection {
+  if (input.text !== undefined) {
+    return { audio: createManualTextCaptureProvider(input.text), transcription: new ManualTranscriptProvider(), providerName: "manual" }
+  }
+
+  const provider = input.sttProvider ?? process.env.VOICE_STT_PROVIDER ?? (input.audioFile || input.sttCommand || input.recorderCommand ? "command" : "manual")
+  if (provider === "manual") {
+    return { audio: createStdinTextCaptureProvider(), transcription: new ManualTranscriptProvider(), providerName: "manual" }
+  }
+
+  if (provider !== "command") throw new Error(`unsupported STT provider: ${provider}`)
+
+  const sttCommand = input.sttCommand ?? process.env.VOICE_STT_COMMAND
+  if (!sttCommand?.trim()) throw new Error("VOICE_STT_COMMAND is required when VOICE_STT_PROVIDER=command")
+
+  if (input.audioFile) {
+    return { audio: createAudioFileCaptureProvider(input.audioFile), transcription: new CommandTranscriptionProvider(sttCommand), providerName: "command" }
+  }
+
+  const recorderCommand = input.recorderCommand ?? process.env.VOICE_RECORDER_COMMAND
+  if (!recorderCommand?.trim()) throw new Error("VOICE_RECORDER_COMMAND is required for live command voice capture")
+
+  return { audio: createCommandAudioCaptureProvider({ command: recorderCommand }), transcription: new CommandTranscriptionProvider(sttCommand), providerName: "command" }
 }
 
 export async function deliverTranscript(config: BridgeConfig, request: TranscriptRequest) {
@@ -59,7 +107,14 @@ export async function deliverStatus(config: BridgeConfig, status: VoiceLifecycle
 export async function checkPluginReadiness(config: BridgeConfig, options: ReadinessCheckOptions = {}): Promise<VoiceReadinessResponse> {
   const endpoint = config.endpoint.replace(/\/$/, "")
   if (!config.token.trim()) {
-    return notReady({ code: "missing_token", message: "VOICE_ORCHESTRATOR_TOKEN is required for bridge readiness." }, endpoint)
+    return notReady(
+      {
+        code: "missing_token",
+        message:
+          "No local bootstrap session was found. Start or restart OpenCode from this project so the plugin can bootstrap localhost auth; VOICE_ORCHESTRATOR_TOKEN is only an advanced compatibility override."
+      },
+      endpoint
+    )
   }
 
   const timeoutMs = options.timeoutMs ?? 2000
@@ -96,9 +151,10 @@ export async function checkPluginReadiness(config: BridgeConfig, options: Readin
 }
 
 export async function runVoiceBridge({ audio, transcription, config, confirm = confirmOnTerminal, status = (next, message) => deliverStatus(config, next, message) }: VoiceBridge): Promise<BridgeResult> {
+  let capture: AudioCapture | undefined
   try {
     await status("listening")
-    const capture = await audio.capture()
+    capture = await audio.capture()
     await status("transcribing")
     const transcript = await transcription.transcribe(capture)
     const request = buildTranscriptRequest({ id: transcript.id, text: transcript.text, action: config.action, confidence: transcript.confidence })
@@ -130,6 +186,8 @@ export async function runVoiceBridge({ audio, transcription, config, confirm = c
     const message = error instanceof Error ? error.message : "voice bridge failed"
     await status("error", message)
     return { ok: false, error: message }
+  } finally {
+    if (capture) await removeInternallyCreatedAudioCaptureFile(capture)
   }
 }
 
@@ -145,24 +203,30 @@ async function confirmOnTerminal(text: string) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const args = process.argv.slice(2)
-  const textIndex = args.indexOf("--text")
-  const text = textIndex >= 0 ? args.slice(textIndex + 1).join(" ") : undefined
-  const port = process.env.VOICE_ORCHESTRATOR_PORT ?? "47737"
-  const token = process.env.VOICE_ORCHESTRATOR_TOKEN ?? ""
+  const text = valueAfter(args, "--text")
+  const audioFile = valueAfter(args, "--audio-file")
+  const provider = valueAfter(args, "--provider")
 
-  const config = { endpoint: `http://127.0.0.1:${port}`, token }
+  const config = resolveBridgeConfig()
   const readiness = await checkPluginReadiness(config)
   if (!readiness.ok) {
     console.error(formatReadinessDiagnostics(readiness))
     process.exitCode = 1
   } else {
-    const audio = text ? createManualTextCaptureProvider(text) : createStdinTextCaptureProvider()
-    const result = await runVoiceBridge({ audio, transcription: new ManualTranscriptProvider(), config })
+    const selection = selectVoiceProviders({ text, audioFile, sttProvider: provider })
+    const result = await runVoiceBridge({ audio: selection.audio, transcription: selection.transcription, config })
     if (!result.ok) {
       console.error(result.error)
       process.exitCode = 1
     }
   }
+}
+
+function valueAfter(args: string[], name: string) {
+  const index = args.indexOf(name)
+  if (index < 0) return undefined
+  const value = args[index + 1]
+  return value && !value.startsWith("--") ? value : undefined
 }
 
 function mapReadinessError(error: unknown, timeoutMs: number) {
