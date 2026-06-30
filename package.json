@@ -7,7 +7,8 @@
     "build": "tsc --noEmit",
     "test": "vitest run",
     "validate": "npm run build && npm run test",
-    "voice:bridge": "tsx src/voice-bridge/index.ts"
+    "voice:bridge": "tsx src/voice-bridge/index.ts",
+    "voice:smoke": "tsx src/voice-bridge/smoke.ts"
   },
   "devDependencies": {
     "@types/node": "^20.14.12",
