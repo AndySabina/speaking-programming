@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline/promises"
 import { stdin as input, stdout as output } from "node:process"
+import { rm } from "node:fs/promises"
 import { accepted, notReady, rejected, validateVoiceReadinessResponse, type TranscriptRequest, type VoiceLifecycleStatus, type VoiceReadinessResponse } from "../protocol/voice.js"
 import { readLocalBootstrapSession } from "../voice-orchestrator/bootstrap.js"
 import { createAudioFileCaptureProvider, createCommandAudioCaptureProvider, createManualTextCaptureProvider, createStdinTextCaptureProvider, type AudioCaptureProvider } from "./audio.js"
@@ -151,9 +152,13 @@ export async function checkPluginReadiness(config: BridgeConfig, options: Readin
 }
 
 export async function runVoiceBridge({ audio, transcription, config, confirm = confirmOnTerminal, status = (next, message) => deliverStatus(config, next, message) }: VoiceBridge): Promise<BridgeResult> {
+  let capturedAudioFile: string | undefined
+  let shouldDeleteCapturedAudioFile = false
   try {
     await status("listening")
     const capture = await audio.capture()
+    capturedAudioFile = capture.audioFile
+    shouldDeleteCapturedAudioFile = capture.internallyCreatedAudioFile === true
     await status("transcribing")
     const transcript = await transcription.transcribe(capture)
     const request = buildTranscriptRequest({ id: transcript.id, text: transcript.text, action: config.action, confidence: transcript.confidence })
@@ -185,6 +190,8 @@ export async function runVoiceBridge({ audio, transcription, config, confirm = c
     const message = error instanceof Error ? error.message : "voice bridge failed"
     await status("error", message)
     return { ok: false, error: message }
+  } finally {
+    if (capturedAudioFile && shouldDeleteCapturedAudioFile) await rm(capturedAudioFile, { force: true }).catch(() => undefined)
   }
 }
 

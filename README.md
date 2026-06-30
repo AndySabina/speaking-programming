@@ -64,7 +64,7 @@ The first real STT path is command-based so it can use local tools without commi
    npm run voice:smoke
    ```
 
-4. Start a live recording/transcription bridge. The recorder command receives the output path as `{output}` and as `VOICE_AUDIO_FILE`; the STT command receives the audio file as `{file}` and as `VOICE_AUDIO_FILE`, and must print the transcript to stdout.
+4. Start a live recording/transcription bridge. The recorder command receives a temporary output path as `{output}` and as `VOICE_AUDIO_FILE`; the STT command receives the audio file as `{file}` and as `VOICE_AUDIO_FILE`, and must print the transcript to stdout. The bridge removes its internally-created temporary recording after the turn completes or fails.
 
    ```bash
    VOICE_RECORDER_COMMAND="arecord -d 5 -f cd {output}" \
@@ -76,7 +76,7 @@ The first real STT path is command-based so it can use local tools without commi
 
 ### Audio-file STT path
 
-If direct microphone capture is not portable on the current machine, record a file with your OS tool first and send that file through the same STT provider:
+If direct microphone capture is not portable on the current machine, record a file with your OS tool first and send that file through the same STT provider. Explicit `--audio-file` inputs are treated as user-owned files and are not deleted by the bridge:
 
 ```bash
 VOICE_STT_COMMAND="whisper-cli -m /path/to/ggml-base.en.bin -f {file} --no-timestamps" \
