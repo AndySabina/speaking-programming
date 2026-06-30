@@ -1,4 +1,5 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawn } from "node:child_process"
@@ -54,6 +55,10 @@ export function createCommandAudioCaptureProvider(input: { command: string; outp
       return { id: input.id ?? createTurnId(), audioFile: outputFile, internallyCreatedAudioFile }
     }
   }
+}
+
+export async function removeInternallyCreatedAudioCaptureFile(capture: AudioCapture): Promise<void> {
+  if (capture.audioFile && capture.internallyCreatedAudioFile === true) await rm(capture.audioFile, { force: true }).catch(() => undefined)
 }
 
 function createTurnId() {

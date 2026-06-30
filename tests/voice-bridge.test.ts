@@ -3,7 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it, vi } from "vitest"
 import { buildTranscriptRequest, checkPluginReadiness, resolveBridgeConfig, runVoiceBridge, selectVoiceProviders } from "../src/voice-bridge/index.js"
-import { createAudioFileCaptureProvider, createCommandAudioCaptureProvider, createManualTextCaptureProvider } from "../src/voice-bridge/audio.js"
+import { createAudioFileCaptureProvider, createCommandAudioCaptureProvider, createManualTextCaptureProvider, removeInternallyCreatedAudioCaptureFile } from "../src/voice-bridge/audio.js"
 import { CommandTranscriptionProvider, ManualTranscriptProvider, UnavailableTranscriptionProvider } from "../src/voice-bridge/transcription.js"
 
 describe("voice bridge request building", () => {
@@ -151,9 +151,29 @@ describe("voice bridge provider flow", () => {
 
     const capture = await audio.capture()
 
-    expect(capture).toMatchObject({ id: "turn-command" })
-    expect(capture.internallyCreatedAudioFile).toBe(true)
-    await expect(transcription.transcribe(capture)).resolves.toEqual({ id: "turn-command", text: "Run validation" })
+    try {
+      expect(capture).toMatchObject({ id: "turn-command" })
+      expect(capture.internallyCreatedAudioFile).toBe(true)
+      await expect(transcription.transcribe(capture)).resolves.toEqual({ id: "turn-command", text: "Run validation" })
+    } finally {
+      await removeInternallyCreatedAudioCaptureFile(capture)
+    }
+    expect(existsSync(capture.audioFile ?? "")).toBe(false)
+  })
+
+  it("preserves explicit command capture output files during provider cleanup", async () => {
+    const outputFile = join(mkdtempSync(join(tmpdir(), "voice-user-audio-")), "capture.wav")
+    const audio = createCommandAudioCaptureProvider({ command: "node -e \"require('fs').writeFileSync(process.env.VOICE_AUDIO_FILE, 'audio')\"", outputFile, id: "turn-explicit-command-output" })
+
+    const capture = await audio.capture()
+
+    try {
+      expect(capture).toMatchObject({ id: "turn-explicit-command-output", audioFile: outputFile, internallyCreatedAudioFile: false })
+      await removeInternallyCreatedAudioCaptureFile(capture)
+      expect(existsSync(outputFile)).toBe(true)
+    } finally {
+      rmSync(outputFile, { force: true })
+    }
   })
 
   it("transcribes an explicit audio file with a command provider", async () => {
