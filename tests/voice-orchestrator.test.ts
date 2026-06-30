@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { applyTranscriptAction, startVoiceOrchestratorServer } from "../.opencode/plugin/voice-orchestrator.js"
+import * as pluginModule from "../.opencode/plugin/voice-orchestrator.js"
+import { applyTranscriptAction, startVoiceOrchestratorServer } from "../src/voice-orchestrator/server.js"
 
 function createTuiClient() {
   return {
@@ -9,6 +10,13 @@ function createTuiClient() {
     showToast: vi.fn(async () => true)
   }
 }
+
+describe("voice orchestrator plugin export contract", () => {
+  it("exports only the default OpenCode plugin function from the configured entry module", () => {
+    expect(Object.keys(pluginModule)).toEqual(["default"])
+    expect(pluginModule.default).toEqual(expect.any(Function))
+  })
+})
 
 describe("voice orchestrator action mapping", () => {
   it("appends transcript text without submitting", async () => {
@@ -71,6 +79,41 @@ describe("voice orchestrator HTTP adapter", () => {
     expect(response.status).toBe(401)
     await expect(response.json()).resolves.toEqual({ ok: false, status: "rejected", message: "unauthorized" })
     expect(tui.appendPrompt).not.toHaveBeenCalled()
+  })
+
+  it("reports authenticated readiness with token-safe endpoint metadata", async () => {
+    const tui = createTuiClient()
+    const server = startVoiceOrchestratorServer({ port: 0, token: "secret", tui })
+    servers.push(server)
+    const url = (await serverUrl(server)).replace("/v1/transcript", "/v1/ready")
+
+    const response = await fetch(url, { headers: { authorization: "Bearer secret" } })
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body).toEqual({ ok: true, status: "ready", endpoint: url.replace("/v1/ready", ""), diagnostics: [] })
+    expect(JSON.stringify(body)).not.toContain("secret")
+    expect(tui.showToast).not.toHaveBeenCalled()
+  })
+
+  it("rejects unauthenticated readiness checks with token-safe diagnostics", async () => {
+    const tui = createTuiClient()
+    const server = startVoiceOrchestratorServer({ port: 0, token: "secret", tui })
+    servers.push(server)
+    const url = (await serverUrl(server)).replace("/v1/transcript", "/v1/ready")
+
+    const response = await fetch(url)
+    const body = await response.json()
+
+    expect(response.status).toBe(401)
+    expect(body).toEqual({
+      ok: false,
+      status: "not_ready",
+      endpoint: url.replace("/v1/ready", ""),
+      diagnostics: [{ code: "token_mismatch", message: "Missing or invalid bearer token." }]
+    })
+    expect(JSON.stringify(body)).not.toContain("secret")
+    expect(tui.showToast).not.toHaveBeenCalled()
   })
 
   it("accepts authenticated transcript requests and validates actions", async () => {
