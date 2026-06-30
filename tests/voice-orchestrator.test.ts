@@ -1,5 +1,9 @@
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import * as pluginModule from "../.opencode/plugin/voice-orchestrator.js"
+import { createLocalBootstrapSession, readLocalBootstrapSession } from "../src/voice-orchestrator/bootstrap.js"
 import { applyTranscriptAction, startVoiceOrchestratorServer } from "../src/voice-orchestrator/server.js"
 
 function createTuiClient() {
@@ -15,6 +19,33 @@ describe("voice orchestrator plugin export contract", () => {
   it("exports only the default OpenCode plugin function from the configured entry module", () => {
     expect(Object.keys(pluginModule)).toEqual(["default"])
     expect(pluginModule.default).toEqual(expect.any(Function))
+  })
+})
+
+describe("voice orchestrator local bootstrap", () => {
+  it("creates a token-safe localhost session file without requiring an env token", () => {
+    const bootstrapFile = join(mkdtempSync(join(tmpdir(), "voice-bootstrap-")), "session.json")
+
+    const session = createLocalBootstrapSession({ port: 47737, bootstrapFile, now: new Date("2026-06-30T00:00:00.000Z") })
+    const persisted = JSON.parse(readFileSync(bootstrapFile, "utf8"))
+
+    expect(session.endpoint).toBe("http://127.0.0.1:47737")
+    expect(session.token).toEqual(expect.any(String))
+    expect(session.token.length).toBeGreaterThan(32)
+    expect(persisted).toMatchObject({ endpoint: "http://127.0.0.1:47737", port: 47737, createdAt: "2026-06-30T00:00:00.000Z" })
+    expect(JSON.stringify({ endpoint: persisted.endpoint, port: persisted.port, createdAt: persisted.createdAt })).not.toContain(session.token)
+  })
+
+  it("reads only localhost bootstrap sessions", () => {
+    const bootstrapFile = join(mkdtempSync(join(tmpdir(), "voice-bootstrap-")), "session.json")
+    createLocalBootstrapSession({ port: 47737, token: "local-token", bootstrapFile })
+
+    expect(readLocalBootstrapSession(bootstrapFile)).toMatchObject({ endpoint: "http://127.0.0.1:47737", token: "local-token" })
+
+    const remoteBootstrapFile = join(mkdtempSync(join(tmpdir(), "voice-bootstrap-")), "session.json")
+    writeFileSync(remoteBootstrapFile, JSON.stringify({ endpoint: "https://example.com:47737", token: "remote-token", port: 47737, pid: 1, createdAt: "2026-06-30T00:00:00.000Z" }))
+
+    expect(readLocalBootstrapSession(remoteBootstrapFile)).toBeUndefined()
   })
 })
 

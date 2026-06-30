@@ -2,6 +2,7 @@
 import { createInterface } from "node:readline/promises"
 import { stdin as input, stdout as output } from "node:process"
 import { accepted, notReady, rejected, validateVoiceReadinessResponse, type TranscriptRequest, type VoiceLifecycleStatus, type VoiceReadinessResponse } from "../protocol/voice.js"
+import { readLocalBootstrapSession } from "../voice-orchestrator/bootstrap.js"
 import { createManualTextCaptureProvider, createStdinTextCaptureProvider, type AudioCaptureProvider } from "./audio.js"
 import { ManualTranscriptProvider, type TranscriptionProvider } from "./transcription.js"
 
@@ -37,6 +38,14 @@ export function buildTranscriptRequest(input: { id: string; text: string; action
   }
 }
 
+export function resolveBridgeConfig(input: { endpoint?: string; port?: string; token?: string } = {}): BridgeConfig {
+  const bootstrap = readLocalBootstrapSession()
+  const endpoint = input.endpoint ?? process.env.VOICE_ORCHESTRATOR_ENDPOINT ?? bootstrap?.endpoint ?? `http://127.0.0.1:${input.port ?? process.env.VOICE_ORCHESTRATOR_PORT ?? "47737"}`
+  const token = input.token ?? process.env.VOICE_ORCHESTRATOR_TOKEN ?? bootstrap?.token ?? ""
+
+  return { endpoint, token }
+}
+
 export async function deliverTranscript(config: BridgeConfig, request: TranscriptRequest) {
   const response = await fetch(`${config.endpoint.replace(/\/$/, "")}/v1/transcript`, {
     method: "POST",
@@ -59,7 +68,14 @@ export async function deliverStatus(config: BridgeConfig, status: VoiceLifecycle
 export async function checkPluginReadiness(config: BridgeConfig, options: ReadinessCheckOptions = {}): Promise<VoiceReadinessResponse> {
   const endpoint = config.endpoint.replace(/\/$/, "")
   if (!config.token.trim()) {
-    return notReady({ code: "missing_token", message: "VOICE_ORCHESTRATOR_TOKEN is required for bridge readiness." }, endpoint)
+    return notReady(
+      {
+        code: "missing_token",
+        message:
+          "No local bootstrap session was found. Start or restart OpenCode from this project so the plugin can bootstrap localhost auth; VOICE_ORCHESTRATOR_TOKEN is only an advanced compatibility override."
+      },
+      endpoint
+    )
   }
 
   const timeoutMs = options.timeoutMs ?? 2000
@@ -145,12 +161,9 @@ async function confirmOnTerminal(text: string) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const args = process.argv.slice(2)
-  const textIndex = args.indexOf("--text")
-  const text = textIndex >= 0 ? args.slice(textIndex + 1).join(" ") : undefined
-  const port = process.env.VOICE_ORCHESTRATOR_PORT ?? "47737"
-  const token = process.env.VOICE_ORCHESTRATOR_TOKEN ?? ""
+  const text = valueAfter(args, "--text")
 
-  const config = { endpoint: `http://127.0.0.1:${port}`, token }
+  const config = resolveBridgeConfig()
   const readiness = await checkPluginReadiness(config)
   if (!readiness.ok) {
     console.error(formatReadinessDiagnostics(readiness))
@@ -163,6 +176,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exitCode = 1
     }
   }
+}
+
+function valueAfter(args: string[], name: string) {
+  const index = args.indexOf(name)
+  if (index < 0) return undefined
+  const value = args[index + 1]
+  return value && !value.startsWith("--") ? value : undefined
 }
 
 function mapReadinessError(error: unknown, timeoutMs: number) {

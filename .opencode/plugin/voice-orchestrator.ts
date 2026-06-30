@@ -1,10 +1,12 @@
 import type { Plugin } from "@opencode-ai/plugin"
+import { createLocalBootstrapSession, getBootstrapFile } from "../../src/voice-orchestrator/bootstrap.js"
 import { startVoiceOrchestratorServer } from "../../src/voice-orchestrator/server.js"
 
 type VoiceOrchestratorOptions = {
   port?: number
   tokenEnv?: string
   token?: string
+  bootstrapFile?: string
 }
 
 const DEFAULT_PORT = 47737
@@ -13,17 +15,14 @@ const DEFAULT_TOKEN_ENV = "VOICE_ORCHESTRATOR_TOKEN"
 export default (async ({ client }, options?: VoiceOrchestratorOptions) => {
   const port = options?.port ?? DEFAULT_PORT
   const tokenEnv = options?.tokenEnv ?? DEFAULT_TOKEN_ENV
-  const token = options?.token ?? process.env[tokenEnv]
+  const bootstrapFile = options?.bootstrapFile ?? getBootstrapFile()
+  const configuredToken = options?.token ?? process.env[tokenEnv]
+  const session = createLocalBootstrapSession({ port, token: configuredToken, bootstrapFile })
 
-  if (!token) {
-    await log(client, "warn", "Voice orchestrator token is not configured; HTTP adapter was not started.", { port, tokenEnv })
-    return {}
-  }
-
-  const server = startVoiceOrchestratorServer({ port, token, tui: client.tui })
+  const server = startVoiceOrchestratorServer({ port, token: session.token, tui: client.tui })
   server.unref()
 
-  await log(client, "info", "Voice orchestrator HTTP adapter started.", { port, tokenEnv })
+  await log(client, "info", "Voice orchestrator HTTP adapter started.", { port, endpoint: session.endpoint, bootstrapFile, tokenSource: configuredToken ? "configured" : "generated" })
 
   return {}
 }) satisfies Plugin

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { checkPluginReadiness, type BridgeConfig } from "./index.js"
+import { checkPluginReadiness, resolveBridgeConfig } from "./index.js"
 import type { VoiceReadinessResponse } from "../protocol/voice.js"
 
 const DEFAULT_HOST = "127.0.0.1"
@@ -14,8 +14,8 @@ type SmokeArgs = {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2))
-  const endpoint = args.endpoint ?? `http://${DEFAULT_HOST}:${args.port ?? process.env.VOICE_ORCHESTRATOR_PORT ?? DEFAULT_PORT}`
-  const config: BridgeConfig = { endpoint, token: process.env.VOICE_ORCHESTRATOR_TOKEN ?? "" }
+  const endpoint = args.endpoint ?? (args.port ? `http://${DEFAULT_HOST}:${args.port}` : undefined)
+  const config = resolveBridgeConfig({ endpoint, port: process.env.VOICE_ORCHESTRATOR_PORT ?? DEFAULT_PORT })
   const readiness = await checkPluginReadiness(config, { timeoutMs: args.timeoutMs ?? DEFAULT_TIMEOUT_MS })
 
   if (readiness.ok) {
@@ -72,7 +72,7 @@ function formatFailure(readiness: VoiceReadinessResponse) {
     endpoint,
     "Diagnostics:",
     ...(diagnostics.length > 0 ? diagnostics : ["- plugin_unavailable: No readiness diagnostics were returned."]),
-    "Next checks: confirm VOICE_ORCHESTRATOR_TOKEN is set in both shells, restart OpenCode after env/config changes, and verify the expected port."
+    "Next checks: confirm OpenCode is running with the plugin loaded, restart OpenCode after config changes, and verify the expected port."
   ].join("\n")
 }
 

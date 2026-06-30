@@ -4,8 +4,7 @@
     [
       "./.opencode/plugin/voice-orchestrator.ts",
       {
-        "port": 47737,
-        "tokenEnv": "VOICE_ORCHESTRATOR_TOKEN"
+        "port": 47737
       }
     ]
   ],
