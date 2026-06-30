@@ -10,8 +10,8 @@
   ],
   "command": {
     "voice-orchestrator": {
-      "description": "Show voice orchestrator setup and local transcript contract.",
-      "template": "Read @README.md and summarize how to run the voice orchestrator bridge safely. Do not start any external service unless the user explicitly asks."
+      "description": "Start local voice bridge mode with plugin bootstrap auth.",
+      "template": "Confirm the user wants to enter voice mode, then guide them to run `npm run voice:smoke` and either `npm run voice:bridge -- --text \"...\"` for fallback text or `VOICE_RECORDER_COMMAND=... VOICE_STT_COMMAND=... npm run voice:listen` for real command-based microphone/STT. Use the plugin bootstrap session for localhost auth; do not ask for VOICE_ORCHESTRATOR_TOKEN and never print token or STT credential values."
     }
   }
 }
