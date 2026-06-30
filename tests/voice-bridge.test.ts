@@ -2,9 +2,9 @@ import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it, vi } from "vitest"
-import { buildTranscriptRequest, checkPluginReadiness, resolveBridgeConfig, runVoiceBridge } from "../src/voice-bridge/index.js"
-import { createManualTextCaptureProvider } from "../src/voice-bridge/audio.js"
-import { ManualTranscriptProvider, UnavailableTranscriptionProvider } from "../src/voice-bridge/transcription.js"
+import { buildTranscriptRequest, checkPluginReadiness, resolveBridgeConfig, runVoiceBridge, selectVoiceProviders } from "../src/voice-bridge/index.js"
+import { createAudioFileCaptureProvider, createCommandAudioCaptureProvider, createManualTextCaptureProvider } from "../src/voice-bridge/audio.js"
+import { CommandTranscriptionProvider, ManualTranscriptProvider, UnavailableTranscriptionProvider } from "../src/voice-bridge/transcription.js"
 
 describe("voice bridge request building", () => {
   it("normalizes transcript requests for plugin delivery", () => {
@@ -126,6 +126,42 @@ function restoreEnv(name: string, value: string | undefined) {
 }
 
 describe("voice bridge provider flow", () => {
+  it("selects command STT for an existing audio file without requiring recorder config", async () => {
+    const selection = selectVoiceProviders({ audioFile: "/tmp/sample.wav", sttProvider: "command", sttCommand: "printf transcript" })
+
+    await expect(selection.audio.capture()).resolves.toMatchObject({ audioFile: "/tmp/sample.wav" })
+    expect(selection.providerName).toBe("command")
+  })
+
+  it("requires a command STT adapter before using command audio capture", () => {
+    expect(() => selectVoiceProviders({ sttProvider: "command", recorderCommand: "arecord -d 3 -f cd {output}" })).toThrow("VOICE_STT_COMMAND is required")
+  })
+
+  it("requires a recorder command for live command voice capture", () => {
+    expect(() => selectVoiceProviders({ sttProvider: "command", sttCommand: "whisper-cli {file}" })).toThrow("VOICE_RECORDER_COMMAND is required")
+  })
+
+  it("rejects unsupported STT providers with token-safe diagnostics", () => {
+    expect(() => selectVoiceProviders({ sttProvider: "cloud-secret-provider", sttCommand: "secret" })).toThrow("unsupported STT provider: cloud-secret-provider")
+  })
+
+  it("captures audio through a command provider and passes the file to command STT", async () => {
+    const audio = createCommandAudioCaptureProvider({ command: "node -e \"require('fs').writeFileSync(process.env.VOICE_AUDIO_FILE, 'audio')\"", id: "turn-command" })
+    const transcription = new CommandTranscriptionProvider("node -e \"process.stdout.write(process.env.VOICE_AUDIO_FILE.endsWith('capture.wav') ? 'Run validation' : '')\"")
+
+    const capture = await audio.capture()
+
+    expect(capture).toMatchObject({ id: "turn-command" })
+    await expect(transcription.transcribe(capture)).resolves.toEqual({ id: "turn-command", text: "Run validation" })
+  })
+
+  it("transcribes an explicit audio file with a command provider", async () => {
+    const audio = createAudioFileCaptureProvider("/tmp/voice.wav", "turn-file")
+    const transcription = new CommandTranscriptionProvider("node -e \"process.stdout.write(process.env.VOICE_AUDIO_FILE === '/tmp/voice.wav' ? 'Explain this diff' : '')\"")
+
+    await expect(transcription.transcribe(await audio.capture())).resolves.toEqual({ id: "turn-file", text: "Explain this diff" })
+  })
+
   it("confirms a manual transcript before delivery", async () => {
     const status = vi.fn(async () => undefined)
     const confirm = vi.fn(async () => false)
