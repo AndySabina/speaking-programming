@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it, vi } from "vitest"
@@ -152,6 +152,7 @@ describe("voice bridge provider flow", () => {
     const capture = await audio.capture()
 
     expect(capture).toMatchObject({ id: "turn-command" })
+    expect(capture.internallyCreatedAudioFile).toBe(true)
     await expect(transcription.transcribe(capture)).resolves.toEqual({ id: "turn-command", text: "Run validation" })
   })
 
@@ -160,6 +161,110 @@ describe("voice bridge provider flow", () => {
     const transcription = new CommandTranscriptionProvider("node -e \"process.stdout.write(process.env.VOICE_AUDIO_FILE === '/tmp/voice.wav' ? 'Explain this diff' : '')\"")
 
     await expect(transcription.transcribe(await audio.capture())).resolves.toEqual({ id: "turn-file", text: "Explain this diff" })
+  })
+
+  it("removes internally captured audio after successful delivery", async () => {
+    const audio = createCommandAudioCaptureProvider({ command: "node -e \"require('fs').writeFileSync(process.env.VOICE_AUDIO_FILE, 'audio')\"", id: "turn-cleanup-success" })
+    let capturedAudioFile = ""
+    const transcription = {
+      async transcribe(capture: { id: string; audioFile?: string }) {
+        capturedAudioFile = capture.audioFile ?? ""
+        expect(existsSync(capturedAudioFile)).toBe(true)
+        return { id: capture.id, text: "Run validation" }
+      }
+    }
+    const previousFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })) as typeof fetch
+
+    try {
+      await expect(
+        runVoiceBridge({
+          audio,
+          transcription,
+          config: { endpoint: "http://127.0.0.1:47737", token: "secret", confirmFirstSubmit: false },
+          status: vi.fn(async () => undefined)
+        })
+      ).resolves.toEqual({ ok: true, submitted: true })
+      expect(capturedAudioFile).toContain("capture.wav")
+      expect(existsSync(capturedAudioFile)).toBe(false)
+    } finally {
+      globalThis.fetch = previousFetch
+    }
+  })
+
+  it("removes internally captured audio when transcription fails", async () => {
+    const audio = createCommandAudioCaptureProvider({ command: "node -e \"require('fs').writeFileSync(process.env.VOICE_AUDIO_FILE, 'audio')\"", id: "turn-cleanup-error" })
+    let capturedAudioFile = ""
+    const transcription = {
+      async transcribe(capture: { audioFile?: string }) {
+        capturedAudioFile = capture.audioFile ?? ""
+        expect(existsSync(capturedAudioFile)).toBe(true)
+        throw new Error("transcription failed")
+      }
+    }
+
+    await expect(
+      runVoiceBridge({
+        audio,
+        transcription,
+        config: { endpoint: "http://127.0.0.1:47737", token: "secret" },
+        status: vi.fn(async () => undefined)
+      })
+    ).resolves.toEqual({ ok: false, error: "transcription failed" })
+    expect(capturedAudioFile).toContain("capture.wav")
+    expect(existsSync(capturedAudioFile)).toBe(false)
+  })
+
+  it("removes internally captured audio when delivery fails", async () => {
+    const audio = createCommandAudioCaptureProvider({ command: "node -e \"require('fs').writeFileSync(process.env.VOICE_AUDIO_FILE, 'audio')\"", id: "turn-cleanup-delivery-error" })
+    let capturedAudioFile = ""
+    const transcription = {
+      async transcribe(capture: { id: string; audioFile?: string }) {
+        capturedAudioFile = capture.audioFile ?? ""
+        return { id: capture.id, text: "Run validation" }
+      }
+    }
+    const previousFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ ok: false, message: "rejected" }), { status: 500 })) as typeof fetch
+
+    try {
+      await expect(
+        runVoiceBridge({
+          audio,
+          transcription,
+          config: { endpoint: "http://127.0.0.1:47737", token: "secret", confirmFirstSubmit: false },
+          status: vi.fn(async () => undefined)
+        })
+      ).resolves.toMatchObject({ ok: false })
+      expect(capturedAudioFile).toContain("capture.wav")
+      expect(existsSync(capturedAudioFile)).toBe(false)
+    } finally {
+      globalThis.fetch = previousFetch
+    }
+  })
+
+  it("preserves explicit audio-file inputs when transcription fails", async () => {
+    const audioFile = join(mkdtempSync(join(tmpdir(), "voice-user-audio-")), "sample.wav")
+    writeFileSync(audioFile, "audio")
+    const transcription = {
+      async transcribe() {
+        throw new Error("transcription failed")
+      }
+    }
+
+    try {
+      await expect(
+        runVoiceBridge({
+          audio: createAudioFileCaptureProvider(audioFile, "turn-preserve-user-audio"),
+          transcription,
+          config: { endpoint: "http://127.0.0.1:47737", token: "secret" },
+          status: vi.fn(async () => undefined)
+        })
+      ).resolves.toEqual({ ok: false, error: "transcription failed" })
+      expect(existsSync(audioFile)).toBe(true)
+    } finally {
+      rmSync(audioFile, { force: true })
+    }
   })
 
   it("confirms a manual transcript before delivery", async () => {

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawn } from "node:child_process"
@@ -7,6 +7,7 @@ export type AudioCapture = {
   id: string
   text?: string
   audioFile?: string
+  internallyCreatedAudioFile?: boolean
   audio?: Uint8Array
 }
 
@@ -43,8 +44,14 @@ export function createCommandAudioCaptureProvider(input: { command: string; outp
   return {
     async capture() {
       const outputFile = input.outputFile ?? join(mkdtempSync(join(tmpdir(), "voice-capture-")), "capture.wav")
-      await runCommandWithAudioFile(input.command, outputFile, "audio capture command failed")
-      return { id: input.id ?? createTurnId(), audioFile: outputFile }
+      const internallyCreatedAudioFile = input.outputFile === undefined
+      try {
+        await runCommandWithAudioFile(input.command, outputFile, "audio capture command failed")
+      } catch (error) {
+        if (internallyCreatedAudioFile) rmSync(outputFile, { force: true })
+        throw error
+      }
+      return { id: input.id ?? createTurnId(), audioFile: outputFile, internallyCreatedAudioFile }
     }
   }
 }
